@@ -31,7 +31,7 @@ const uni = parseAbi([
   'function exactInputSingle((address tokenIn, address tokenOut, uint24 fee, address recipient, uint256 amountIn, uint256 amountOutMinimum, uint160 sqrtPriceLimitX96) params) payable returns (uint256)',
   'function quoteExactInputSingle((address tokenIn, address tokenOut, uint256 amountIn, uint24 fee, uint160 sqrtPriceLimitX96) params) returns (uint256 amountOut, uint160, uint32, uint256)',
 ]);
-const weth = parseAbi(['function deposit() payable']);
+const weth = parseAbi(['function deposit() payable', 'function withdraw(uint256 wad)']);
 const sel = (sig) => toFunctionSelector(sig);
 
 // ---------------------------------------------------------------- signer ----
@@ -88,6 +88,8 @@ export async function grant() {
       { chain_id: CHAIN_ID, to: AAVE_POOL, selector: sel('function withdraw(address,uint256,address)') },
       { chain_id: CHAIN_ID, to: ROUTER, selector: sel('function exactInputSingle((address,address,uint24,address,uint256,uint256,uint160))') },
       { chain_id: CHAIN_ID, to: WETH, selector: sel('function deposit()') },
+      // Unwrap: WETH pays the ETH back to the caller, the account itself.
+      { chain_id: CHAIN_ID, to: WETH, selector: sel('function withdraw(uint256)') },
     ],
     hl_markets: ['ETH', 'BTC'].filter((c) => m[c]).map((c) => ({ asset: m[c].asset, max_leverage: 3 })),
     caps: [
@@ -311,14 +313,34 @@ async function runInner(u, i, progress) {
       const a = await ensureAllowance(u, tokenIn, ROUTER, amountIn, progress);
       if (a) links.push({ label: 'Approve', url: a.url });
       progress?.({ text: 'Swapping…' });
+      const before = tokenOut === WETH ? await evm.readContract({ address: WETH, abi: erc20, functionName: 'balanceOf', args: [u.evm] }) : 0n;
       const t = await sendEvm(u, { to: ROUTER, data: encodeFunctionData({ abi: uni, functionName: 'exactInputSingle', args: [{ tokenIn, tokenOut, fee: FEE, recipient: u.evm, amountIn, amountOutMinimum: minOut, sqrtPriceLimitX96: 0n }] }) }, progress);
       links.push({ label: 'Swap', url: t.url });
+      if (tokenOut === WETH) {
+        // Uniswap pays WETH: unwrap what this swap paid, so the wallet holds plain ETH.
+        // Grants approved before unwrapping existed don't list it: then the WETH stays.
+        const got = (await evm.readContract({ address: WETH, abi: erc20, functionName: 'balanceOf', args: [u.evm] })) - before;
+        if (got > 0n && (await canUnwrap(u))) {
+          progress?.({ text: 'Unwrapping to ETH…' });
+          const w = await sendEvm(u, { to: WETH, data: encodeFunctionData({ abi: weth, functionName: 'withdraw', args: [got] }) }, progress);
+          links.push({ label: 'Unwrap', url: w.url });
+        } else if (got > 0n) {
+          return { text: `Swapped ${i.amount} ${i.from} for ${Number(formatUnits(got, 18)).toPrecision(4)} WETH (wrapped ETH). Reconnect with /link to let the bot unwrap it.`, links };
+        }
+      }
       const got = Number(formatUnits(result[0], dOut));
       return { text: `Swapped ${i.amount} ${i.from} for about ${got.toPrecision(4)} ${i.to}`, links };
     }
     default:
       throw new Refused(`can't do "${i.kind}"`);
   }
+}
+
+/** Whether the user's grant lets the bot unwrap WETH (grants from before this step don't). */
+async function canUnwrap(u) {
+  const g = (await agentFor(u).session())?.grant;
+  const s = sel('function withdraw(uint256)');
+  return !!g?.evm_venues?.some((v) => v.chain_id === CHAIN_ID && v.to.toLowerCase() === WETH && v.selector.toLowerCase() === s);
 }
 
 /** A short random id for a confirm prompt. */

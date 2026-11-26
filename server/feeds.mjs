@@ -136,6 +136,10 @@ export function glance(s) {
     if (a.health !== null) lines.push({ urgent: a.health < 1.3, text: `Aave health ${a.health.toFixed(2)}` });
     lines.push({ text: `Aave ${usd(a.suppliedUsdc)} in, ${usd(a.usdc)} cash` });
   }
+  if (s.eth) {
+    const eth = s.eth.eth + s.eth.weth;
+    lines.push({ text: `Base ${eth.toFixed(4)} ETH${s.eth.weth > 0.00005 ? ` (${s.eth.weth.toFixed(4)} wrapped)` : ''}` });
+  }
   for (const m of s.markets) {
     const top = [...m.outcomes].sort((a, b) => b.pct - a.pct)[0];
     lines.push({ text: `${m.question.slice(0, 20).trim()}… ${top.name.slice(0, 6)} ${top.pct}%` });
