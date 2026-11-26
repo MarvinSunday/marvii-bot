@@ -3,8 +3,8 @@
 import { execFile } from 'node:child_process';
 import { Bot, InlineKeyboard } from 'grammy';
 import { config } from './config.mjs';
-import { user, update, pair, unpairAll } from './store.mjs';
-import { ask, confirm, lines, hooks, openPrompt } from './core.mjs';
+import { user, update, pair, unpairAll, DEFAULT_ALERTS } from './store.mjs';
+import { ask, confirm, lines, hooks, openPrompt, history } from './core.mjs';
 import { linkFor } from './marvii.mjs';
 import { polymarket, polymarketEvent, polymarketSlug } from './feeds.mjs';
 import { transcribe } from './stt.mjs';
@@ -54,7 +54,7 @@ export function startBot() {
     const link = await linkFor(u, `${config.publicUrl}/linked`);
     await ctx.reply(
       'Marvii bot follows your positions and acts for you, but only within limits you set with your passkey:\n' +
-      '• Hyperliquid testnet: ETH and BTC perps, up to 3x, $2,000 of orders a day\n' +
+      '• Hyperliquid testnet: ETH and BTC perps, up to 10x, $2,000 of orders a day\n' +
       '• Aave and Uniswap on Base Sepolia: up to 500 USDC and 0.2 ETH a day\n' +
       '• Nothing can be sent to anyone else. Over a limit, your phone asks for your passkey.\n\n' +
       'Open the link, check what it asks for, and approve with Face ID or your fingerprint. It opens in your browser, since passkeys don\'t work inside Telegram.',
@@ -82,6 +82,40 @@ export function startBot() {
     if (!u.wallet) return sendLink(ctx, u);
     const l = await lines(u, { fresh: true });
     await ctx.reply(l.length ? l.join('\n') : 'Nothing to show yet.');
+  });
+  bot.command('history', async (ctx) => {
+    const u = user(ctx.from.id);
+    const h = (u.history ?? []).slice(-10).reverse();
+    if (!h.length) return ctx.reply('No actions yet.');
+    const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
+    const rows = h.map((x) => `${new Date(x.at).toISOString().slice(5, 16).replace('T', ' ')} ${x.ok ? '✅' : '⛔'} ${esc(x.text)}${(x.links ?? []).map((l) => ` <a href="${esc(l.url)}">${esc(l.label)}</a>`).join(' ·')}`);
+    await ctx.reply(`Your last ${h.length} actions (UTC):\n\n${rows.join('\n')}`, { parse_mode: 'HTML', link_preview_options: { is_disabled: true } });
+  });
+  bot.command('alerts', async (ctx) => {
+    const u = user(ctx.from.id);
+    const [what, val] = (ctx.match ?? '').trim().toLowerCase().split(/\s+/);
+    const a = { ...DEFAULT_ALERTS, ...u.alerts };
+    const set = { health: 'healthBelow', pnl: 'pnlMovePct', liq: 'liqDistancePct' };
+    if (what === 'off' || what === 'on') {
+      update(u.id, { alerts: { ...a, off: what === 'off' } });
+      return ctx.reply(what === 'off' ? '🔕 Alerts are off. /alerts on to turn them back on.' : '🔔 Alerts are on.');
+    }
+    if (set[what]) {
+      const n = Number(val);
+      const ok = what === 'health' ? n > 1 && n <= 5 : n > 0 && n <= 100;
+      if (!ok) return ctx.reply(what === 'health' ? 'Health is a number between 1 and 5, e.g. /alerts health 1.5' : `Send a percent, e.g. /alerts ${what} ${what === 'pnl' ? 10 : 5}`);
+      update(u.id, { alerts: { ...a, [set[what]]: n } });
+      return ctx.reply(`Saved. ${what === 'health' ? `Aave health under ${n}` : what === 'pnl' ? `PnL in ${n}% steps` : `${n}% from liquidation`}.`);
+    }
+    await ctx.reply([
+      `Alerts are ${a.off ? 'off 🔕' : 'on 🔔'}:`,
+      `• Near liquidation: within ${a.liqDistancePct}%  (/alerts liq 5)`,
+      `• PnL moves: every ${a.pnlMovePct}%  (/alerts pnl 10)`,
+      `• Aave health: under ${a.healthBelow}  (/alerts health 1.5)`,
+      '• Paper bets: every 20% move, and when the market settles',
+      '',
+      '/alerts off · /alerts on',
+    ].join('\n'));
   });
   bot.command('pair', async (ctx) => {
     const code = (ctx.match ?? '').replace(/\D/g, '');
@@ -169,6 +203,8 @@ export function startBot() {
   bot.catch((e) => console.error(`bot: ${e.error?.message ?? e.message}`));
   bot.api.setMyCommands([
     { command: 'status', description: 'Your positions at a glance' },
+    { command: 'history', description: 'Your last actions' },
+    { command: 'alerts', description: 'See or change your alerts' },
     { command: 'watch', description: 'Follow a Polymarket market' },
     { command: 'pair', description: 'Connect your G2 glasses' },
     { command: 'link', description: 'Connect your Marvii wallet' },

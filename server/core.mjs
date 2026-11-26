@@ -2,7 +2,8 @@
 // confirm prompts, what's running, and the alerts.
 import { parse, describe } from './parse.mjs';
 import { snapshot, glance } from './feeds.mjs';
-import { run, promptId } from './marvii.mjs';
+import { run, promptId, grantLeverage, HL_COINS, HL_MIN_USD } from './marvii.mjs';
+import { hlMids, hlState } from './feeds.mjs';
 import { allLinked, update, user } from './store.mjs';
 import { resolve, runPaper, positions } from './paper.mjs';
 import { GLASSES_HELP } from './phrases.mjs';
@@ -54,6 +55,7 @@ export async function ask(u, phrase) {
   if (!i) return { kind: 'unknown', text: `Didn't catch that: "${phrase}". Say "help" for everything you can say.` };
   if (i.kind === 'help') return { kind: 'help', lines: GLASSES_HELP };
   if (i.kind === 'status') return { kind: 'status', lines: await lines(u, { fresh: true }) };
+  if (i.kind === 'history') return { kind: 'status', lines: history(u, 5).length ? history(u, 5) : ['No actions yet'] };
   if (i.kind === 'yes' || i.kind === 'no') {
     const id = openPrompt(u);
     if (!id) return { kind: 'unknown', text: 'Nothing to confirm.' };
@@ -61,6 +63,10 @@ export async function ask(u, phrase) {
     return { kind: i.kind === 'yes' ? 'confirmed' : 'cancelled', id };
   }
   if (!u.wallet) return { kind: 'unknown', text: 'Link your Marvii wallet first: /start in Telegram.' };
+  if (i.kind.startsWith('hl_') && i.kind !== 'hl_transfer') {
+    const why = await checkPerp(u, i).catch((e) => `Couldn't check that: ${e.message}`);
+    if (why) return { kind: 'unknown', text: why, reason: why };
+  }
   if (i.kind === 'hype_move') {
     // Also the owner's own action, with the passkey, on the wallet page.
     const url = `${config.marvii.page}/#/chain-998?hl=${i.toCore ? 'hype-core' : 'hype-evm'}&amount=${i.amount}`;
@@ -91,6 +97,35 @@ export async function ask(u, phrase) {
   return { kind: 'prompt', id, text, detail: intent.question };
 }
 
+/** Why a perps request can't go ahead, in plain words, or null. Checked before the confirm prompt. */
+async function checkPerp(u, i) {
+  if (!HL_COINS.includes(i.coin)) return `I can trade ${HL_COINS.join(' and ')} perps for now, not ${i.coin}.`;
+  if (i.kind === 'hl_close') {
+    // Hyperliquid's $10 minimum holds for closes too: check a partial close before signing.
+    if (!i.fraction || !u.evm) return null;
+    const p = (await hlState(u.evm)).positions.find((x) => x.coin === i.coin);
+    if (!p) return `You have no open ${i.coin} position.`;
+    const part = Math.abs(p.size) * i.fraction * p.mark;
+    if (part < HL_MIN_USD) return `${Math.round(i.fraction * 100)}% of your ${i.coin} position is about $${part.toFixed(2)}, under Hyperliquid's $${HL_MIN_USD} minimum. Say "close ${i.coin.toLowerCase()}" to close all of it.`;
+    return null;
+  }
+  if (i.leverage !== undefined) {
+    const max = (await grantLeverage(u))[i.coin];
+    if (!max) return `Your Marvii grant doesn't include ${i.coin} perps. Send /link to update it.`;
+    if (i.leverage < 1 || i.leverage > max) return `You approved up to ${max}x on ${i.coin}. Send /link to approve more.`;
+  }
+  if (i.kind === 'hl_order') {
+    const usd = i.usd ? Number(i.usd) : Number(i.size) * Number((await hlMids())[i.coin]);
+    if (usd < HL_MIN_USD) return `Hyperliquid's smallest order is $${HL_MIN_USD}${i.usd ? '' : ` (${i.size} ${i.coin} is about $${usd.toFixed(2)})`}.`;
+  }
+  return null;
+}
+
+/** The last actions, newest first, as short lines. */
+export function history(u, n = 10) {
+  return (u.history ?? []).slice(-n).reverse().map((h) => `${new Date(h.at).toISOString().slice(5, 16).replace('T', ' ')} ${h.ok ? '✓' : '✗'} ${h.text}`);
+}
+
 /** Yes or no on a prompt. Runs the action in the background; progress and the result go to both screens. */
 export function confirm(id, yes) {
   const p = prompts.get(id);
@@ -111,6 +146,7 @@ export function confirm(id, yes) {
   job.catch((e) => ({ ok: false, text: e.message })).then((r) => {
     activity.set(u.id, { text: r.text, done: true, ok: r.ok, links: r.links, at: Date.now() });
     hooks.notify(u, { text: `${r.ok ? '✅' : '⛔'} ${r.text}`, links: r.links });
+    update(u.id, { history: [...(user(u.id).history ?? []), { at: Date.now(), ok: r.ok, text: r.text, links: r.links ?? [] }].slice(-30) });
     refresh(u).catch(() => {});
   });
   return true;
@@ -163,7 +199,7 @@ async function poll() {
         const first = !(family in seen);
         seen[family] = f.key;
         // Odds: no message for the first reading, only for moves.
-        if (!(f.quiet && first)) hooks.notify(u, { text: `🔔 ${f.text}` });
+        if (!(f.quiet && first) && !u.alerts?.off) hooks.notify(u, { text: `🔔 ${f.text}` });
       }
       // A condition that cleared can fire again later.
       for (const fam of Object.keys(seen)) if (!keys.has(fam)) delete seen[fam];

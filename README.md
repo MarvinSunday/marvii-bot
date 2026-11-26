@@ -18,7 +18,7 @@ Bots that do it for you need your keys, and a bot holding your keys can do anyth
 - Hyperliquid testnet positions: side, PnL and return, most urgent first.
 - Aave on Base Sepolia: what you supplied, cash, and the health factor when you borrow.
 - Polymarket odds on markets you follow, and your paper bets on them (see Limits).
-- Alerts in Telegram, sent once per crossing: near liquidation, PnL moving in 5% steps, Aave health under 1.3, odds moving, a paper bet moving 20% or its market settling.
+- Alerts in Telegram, sent once per crossing: near liquidation, PnL moving in 5% steps, Aave health under 1.3, odds moving, a paper bet moving 20% or its market settling. `/alerts` shows them and changes the levels (`/alerts pnl 10`, `/alerts health 1.5`, `/alerts liq 5`) or turns them off.
 
 **Write: a short phrase, then one tap**
 
@@ -26,8 +26,10 @@ Hold the touchpad or the R1 ring and speak, send a Telegram voice note, or type:
 
 | Say | Does |
 |---|---|
-| `buy 0.01 eth` · `short 0.02 btc` | Hyperliquid testnet perp, a marketable limit order at most 1% from the mid price |
-| `close eth` | closes the open position (reduce-only) |
+| `buy $50 of eth` · `long btc with 100 dollars` | Hyperliquid testnet perp sized in dollars, from Hyperliquid's $10 minimum; a marketable limit order at most 1% from the mid price |
+| `buy 0.01 eth` · `short 0.02 btc` | the same, sized in coins |
+| `buy $50 of eth at 5x` · `set eth leverage to 5x` | sets the market's leverage (cross), up to what the owner approved |
+| `close eth` · `close half my eth` · `close 25% of btc` | closes all or part of the position (reduce-only) |
 | `move 0.5 hype to hyperliquid` · `move 0.5 hype to hyperevm` | the same, for HYPE between HyperEVM and Hyperliquid (same address on both). USDC between them isn't supported yet. |
 | `move 40 usdc to perps` · `move 20 usdc to spot` | opens the Hyperliquid card in your Marvii wallet for a passkey tap. Money sent to you on Hyperliquid lands in spot; the glance shows both balances. |
 | `supply 50 usdc` · `withdraw 20 usdc` · `withdraw all` | Aave V3 on Base Sepolia |
@@ -35,6 +37,7 @@ Hold the touchpad or the R1 ring and speak, send a Telegram voice note, or type:
 | `bet 10 on yes` · `bet 25 on no for nvidia` | Polymarket paper bet on a market you follow, at the live price |
 | `cash out` · `cash out nvidia` | closes a paper bet at the live price |
 | `status` | the glance, now |
+| `history` · `/history` | the last actions, with explorer links in Telegram |
 
 - **The glasses** show `Buy 0.01 ETH perp?` with Confirm and Cancel. Tap to confirm; double-tap cancels.
 - **Telegram** shows the same prompt with buttons.
@@ -55,7 +58,7 @@ NEAR Chain Signatures sign for the wallet's address ──▶ Hyperliquid / Base
 
 - **The bot holds no wallet keys.** Its session key is made and kept inside Marvii's module on OutLayer (Intel TDX). The bot asks the enclave to sign, and never sees the key.
 - **The owner sets the limits once,** with a passkey (Face ID or fingerprint) on near.marvii.xyz. The link from `/start` shows exactly what the bot asks for:
-  - Hyperliquid ETH and BTC perps up to 3x and $2,000 of orders a day
+  - Hyperliquid ETH and BTC perps up to 10x (or the market's maximum, if lower) and $2,000 of orders a day
   - Aave supply and withdraw, Uniswap USDC↔ETH, wrapping and unwrapping ETH
   - up to 500 USDC and 0.2 ETH a day
   - 30 days, or 14 days unused

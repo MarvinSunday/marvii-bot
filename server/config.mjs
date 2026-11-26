@@ -34,6 +34,8 @@ export const config = {
 
   evmRpc: env('BASE_SEPOLIA_RPC', 'https://sepolia.base.org'),
   hyperliquid: env('HL_API', 'https://api.hyperliquid-testnet.xyz'),
+  /** The highest leverage the bot asks the owner for, per market (lower if Hyperliquid's market allows less). */
+  hlMaxLeverage: Number(env('HL_MAX_LEVERAGE', 10)),
   polymarket: env('POLYMARKET_API', 'https://gamma-api.polymarket.com'),
   hyperEvmRpc: env('HYPEREVM_RPC', 'https://rpc.hyperliquid-testnet.xyz/evm'),
 

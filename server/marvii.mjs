@@ -15,6 +15,10 @@ import { OutLayerSigner, LocalSigner, MarviiAgent, permissionLink, evmTx, hlOrde
 import { evm, erc20, pool, AAVE_POOL, USDC, WETH, hlMarkets, hlMids, hlState } from './feeds.mjs';
 
 const CHAIN_ID = 84532; // Base Sepolia
+/** The perps markets the bot asks for. */
+export const HL_COINS = ['ETH', 'BTC'];
+/** Hyperliquid's smallest order, in USD. */
+export const HL_MIN_USD = 10;
 // Uniswap V3 on Base Sepolia: SwapRouter02 and QuoterV2, checked on-chain in
 // near/agent/agent.mjs (factory() is the Uniswap V3 factory, WETH9() is WETH).
 const ROUTER = '0x94cc0aac535ccdb3c01d6787d6413c739ae12bc4';
@@ -91,7 +95,7 @@ export async function grant() {
       // Unwrap: WETH pays the ETH back to the caller, the account itself.
       { chain_id: CHAIN_ID, to: WETH, selector: sel('function withdraw(uint256)') },
     ],
-    hl_markets: ['ETH', 'BTC'].filter((c) => m[c]).map((c) => ({ asset: m[c].asset, max_leverage: 3 })),
+    hl_markets: HL_COINS.filter((c) => m[c]).map((c) => ({ asset: m[c].asset, max_leverage: Math.min(config.hlMaxLeverage, m[c].maxLeverage) })),
     caps: [
       { asset: 'hyperliquid:usd', daily: String(2_000n * 10n ** 6n) },
       { asset: `evm:${CHAIN_ID}:${USDC}`, daily: String(500n * 10n ** 6n) },
@@ -235,23 +239,90 @@ async function sendHl(u, action) {
   return { filled: st?.filled, near: out.tx_hash && nearTx(out.tx_hash) };
 }
 
-const leverageSet = new Set();
-async function hlTrade(u, { coin, isBuy, size, reduceOnly }, progress) {
+const grantCache = new Map(); // wallet/keyId -> { at, max: { ETH: 3, … } }
+/** The highest leverage the user's grant allows on each market, read from the session on NEAR. */
+export async function grantLeverage(u) {
+  const k = `${u.wallet}/${u.keyId}`;
+  const c = grantCache.get(k);
+  if (c && Date.now() - c.at < 5 * 60_000) return c.max;
+  const s = await agentFor(u).session();
+  const byAsset = Object.fromEntries(Object.entries(await hlMarkets()).map(([coin, m]) => [m.asset, coin]));
+  const max = Object.fromEntries((s?.grant?.hl_markets ?? []).map((x) => [byAsset[x.asset], x.max_leverage]));
+  grantCache.set(k, { at: Date.now(), max });
+  return max;
+}
+
+/** The account's current leverage on a market (Hyperliquid keeps one per market). */
+async function currentLeverage(address, coin) {
+  const r = await fetch(`${config.hyperliquid}/info`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ type: 'activeAssetData', user: address, coin }) }).then((x) => x.json()).catch(() => null);
+  return r?.leverage?.value ?? null;
+}
+
+/**
+ * Sets the market's leverage when asked, or brings it down to the grant's
+ * limit if it's above (Hyperliquid's default can be higher). Cross margin.
+ */
+async function ensureLeverage(u, coin, m, want, progress) {
+  const max = (await grantLeverage(u))[coin];
+  if (!max) throw new Refused(`your grant doesn't include ${coin} perps`);
+  if (want !== undefined && (want < 1 || want > max)) throw new Refused(`leverage above what the grant allows (${max}x on ${coin})`);
+  const now = await currentLeverage(u.evm, coin);
+  const target = want ?? (now === null || now > max ? Math.min(max, 3) : null);
+  if (target === null || target === now) return now;
+  progress?.({ text: `Setting ${coin} leverage to ${target}x…` });
+  await sendHl(u, hlLeverage({ asset: m.asset, is_cross: true, leverage: target, nonce: Date.now() }));
+  return target;
+}
+
+/** A size worth at least `usd` (and Hyperliquid's $10 minimum) at `price`, in the market's lot size. */
+export function sizeForUsd(usd, price, szDecimals) {
+  const step = 10 ** -szDecimals;
+  let s = Math.round(usd / price / step) * step;
+  while (s * price < Math.max(usd, HL_MIN_USD) * 0.999) s += step;
+  return s;
+}
+
+async function hlTrade(u, { coin, isBuy, size, usd, leverage, reduceOnly }, progress) {
   const m = (await hlMarkets())[coin];
   if (!m) throw new Refused(`no ${coin} market on Hyperliquid testnet`);
-  // Leverage once per market, at what the grant allows (Hyperliquid's default may be higher).
-  const lk = `${u.wallet}/${coin}`;
-  if (!leverageSet.has(lk)) {
-    progress?.({ text: 'Setting leverage to 3x…' });
-    await sendHl(u, hlLeverage({ asset: m.asset, is_cross: true, leverage: 3, nonce: Date.now() }));
-    leverageSet.add(lk);
-  }
+  const lev = reduceOnly ? null : await ensureLeverage(u, coin, m, leverage, progress);
   const mid = Number((await hlMids())[coin]);
   // A marketable limit order: up to 1% worse than the mid price, the rest cancelled.
-  const price = hlPrice(mid * (isBuy ? 1.01 : 0.99), m.szDecimals);
-  const r = await sendHl(u, hlOrder({ asset: m.asset, is_buy: isBuy, price, size: hlSize(size, m.szDecimals), reduce_only: reduceOnly, tif: 'Ioc', nonce: Date.now() }));
+  const limit = Number(hlPrice(mid * (isBuy ? 1.01 : 0.99), m.szDecimals));
+  if (usd) size = sizeForUsd(Number(usd), Math.min(limit, mid), m.szDecimals);
+  const sz = hlSize(size, m.szDecimals);
+  if (Number(sz) <= 0) throw new Refused(`that's smaller than the smallest ${coin} size`);
+  const r = await sendHl(u, hlOrder({ asset: m.asset, is_buy: isBuy, price: hlNum(String(limit)), size: sz, reduce_only: reduceOnly, tif: 'Ioc', nonce: Date.now() }));
   if (!r.filled) throw new Error('not filled (the price moved more than 1%)');
-  return { text: `${isBuy ? 'Bought' : 'Sold'} ${r.filled.totalSz} ${coin} at ${r.filled.avgPx}`, links: [r.near && { label: 'NEAR check', url: r.near }].filter(Boolean) };
+  const value = Number(r.filled.totalSz) * Number(r.filled.avgPx);
+  return {
+    text: `${isBuy ? 'Bought' : 'Sold'} ${r.filled.totalSz} ${coin} at ${r.filled.avgPx} ($${value.toFixed(2)}${lev ? `, ${lev}x` : ''})`,
+    links: [r.near && { label: 'NEAR check', url: r.near }].filter(Boolean),
+  };
+}
+
+/**
+ * Plain words for what went wrong. The raw message still goes to the log.
+ * Patterns: Hyperliquid's and the Marvii extension's own error texts.
+ */
+export function plainError(msg) {
+  const rules = [
+    [/minimum value of \$?10|min(imum)? .*\$10/i, "Hyperliquid's smallest order is $10."],
+    [/insufficient margin|not enough margin/i, 'Not enough margin on Hyperliquid. Say "move 20 usdc to perps" to add some.'],
+    [/leverage above what the grant allows(.*)/i, (m) => `That leverage is more than you approved${m[1] ? ' ' + m[1].trim() : ''}. Send /link to approve more.`],
+    [/over the daily cap/i, "That's over today's limit you approved."],
+    [/session expired/i, 'Your Marvii link expired. Send /link to renew it.'],
+    [/not an allowed venue|spender is not a venue|grant doesn't include/i, "That isn't something you allowed Marvii bot to do. Send /link to update what it may do."],
+    [/output_storage_unpaid|OutLayer/i, "Marvii's secure signer didn't answer. Try again in a minute."],
+    [/fetch failed|ECONNRESET|ETIMEDOUT|timed? ?out/i, 'A network call failed. Try again in a minute.'],
+    [/not filled/i, 'Not filled: the price moved more than 1%. Try again.'],
+    [/no open (\w+) position/i, (m) => `You have no open ${m[1]} position.`],
+  ];
+  for (const [re, t] of rules) {
+    const m = re.exec(msg);
+    if (m) return typeof t === 'function' ? t(m) : t;
+  }
+  return msg;
 }
 
 // ---- Public: run an intent from parse.mjs
@@ -268,7 +339,8 @@ export function run(u, intent, progress) {
       const r = await runInner(u, intent, progress);
       return { ok: true, links: [], ...r };
     } catch (e) {
-      return { ok: false, text: e instanceof Refused ? `Refused: ${e.message}` : `Failed: ${e.message}`, links: [] };
+      console.error(`run ${intent.kind}: ${e.message}`);
+      return { ok: false, text: plainError(e.message), links: [] };
     }
   });
 }
@@ -276,11 +348,17 @@ export function run(u, intent, progress) {
 async function runInner(u, i, progress) {
   switch (i.kind) {
     case 'hl_order':
-      return hlTrade(u, { coin: i.coin, isBuy: i.side === 'buy', size: Number(i.size), reduceOnly: false }, progress);
+      return hlTrade(u, { coin: i.coin, isBuy: i.side === 'buy', size: i.size && Number(i.size), usd: i.usd, leverage: i.leverage, reduceOnly: false }, progress);
     case 'hl_close': {
       const p = (await hlState(u.evm)).positions.find((x) => x.coin === i.coin);
       if (!p) throw new Refused(`no open ${i.coin} position`);
-      return hlTrade(u, { coin: i.coin, isBuy: p.size < 0, size: Math.abs(p.size), reduceOnly: true }, progress);
+      return hlTrade(u, { coin: i.coin, isBuy: p.size < 0, size: Math.abs(p.size) * (i.fraction ?? 1), reduceOnly: true }, progress);
+    }
+    case 'hl_leverage': {
+      const m = (await hlMarkets())[i.coin];
+      if (!m) throw new Refused(`no ${i.coin} market on Hyperliquid testnet`);
+      await ensureLeverage(u, i.coin, m, i.leverage, progress);
+      return { text: `${i.coin} leverage is now ${i.leverage}x (cross)` };
     }
     case 'aave_supply': {
       const amount = parseUnits(i.amount, 6);

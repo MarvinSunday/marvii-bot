@@ -2,7 +2,9 @@
 // intent. A fixed grammar, not a model: what you say is what gets confirmed.
 //
 //   buy 0.01 eth · long 0.01 eth · sell 0.02 eth · short 0.02 eth
-//   close eth
+//   buy $50 of eth · long eth with 100 dollars at 5x · short 0.01 btc 2x
+//   close eth · close half my eth · close 25% of btc
+//   set eth leverage to 5x
 //   supply 50 usdc · deposit 50 · withdraw 20 usdc · withdraw all
 //   swap 10 usdc to eth · swap 0.001 eth for usdc
 //   move 40 usdc to perps · move 20 to spot   (Hyperliquid, needs the owner's passkey)
@@ -11,6 +13,7 @@
 //   status · positions
 //   yes · confirm · no · cancel
 //   help · what can i say
+//   history
 
 const ONES = { zero: 0, oh: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19 };
 const TENS = { twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90 };
@@ -29,6 +32,7 @@ export function normalize(text) {
   return String(text)
     .toLowerCase()
     .replace(/(\d),(\d{3})/g, '$1$2')
+    .replace(/%/g, ' percent ')
     .replace(/\$\s*([\d.]+)/g, '$1 usdc')
     .replace(/u\.?s\.?d\.?c\.?/g, 'usdc')
     .replace(/e\.?t\.?h\.?(?![a-z])/g, 'eth')
@@ -90,6 +94,23 @@ function amountAndAsset(ws) {
   return { amount: num(ws[i]), asset: a };
 }
 
+/**
+ * Takes a leverage out of the words ("5x", "5 x", "5 times", "leverage 5",
+ * "5 leverage"), so its number isn't read as the size.
+ */
+function takeLeverage(ws) {
+  const out = [...ws];
+  let leverage;
+  for (let i = 0; i < out.length; i++) {
+    const m = /^(\d+)x$/.exec(out[i]);
+    if (m) { leverage = Number(m[1]); out.splice(i--, 1); continue; }
+    if (/^\d+$/.test(out[i]) && ['x', 'times'].includes(out[i + 1])) { leverage = Number(out[i]); out.splice(i--, 2); continue; }
+    if (out[i] === 'leverage' && /^\d+$/.test(out[i + 1] ?? '')) { leverage = Number(out[i + 1]); out.splice(i--, 2); continue; }
+    if (/^\d+$/.test(out[i]) && out[i + 1] === 'leverage') { leverage = Number(out[i]); out.splice(i--, 2); continue; }
+  }
+  return { ws: out.filter((w) => w !== 'leverage'), leverage };
+}
+
 const FILLER = new Set(['bet', 'bets', 'my', 'the', 'a', 'on', 'in', 'for', 'about', 'market', 'cash', 'out', 'cashout', 'close', 'exit', 'sell', 'end', 'paper', 'please', 'usdc', 'and', 'of', 'that', 'this', 'it', 'will', 'to']);
 /** Words that may name the market ("for nvidia"), filler dropped. */
 const about = (ws) => ws.filter((w) => !FILLER.has(w) && !isNum(w) && w.length > 2);
@@ -120,8 +141,15 @@ export function parse(text) {
     return { kind: 'pm_bet', amount, outcome, about: about(ws.slice(j + 1)) };
   }
   if (has(/ (close|exit|flatten) /)) {
-    const a = ws.map(asset).find(Boolean) ?? 'ETH';
-    return { kind: 'hl_close', coin: a };
+    const a = ws.map(asset).find((x) => x && x !== 'USDC') ?? 'ETH';
+    let fraction;
+    if (has(/ half /)) fraction = 0.5;
+    else if (has(/ quarter /)) fraction = 0.25;
+    else if (has(/ third /)) fraction = 1 / 3;
+    const pc = ws.indexOf('percent');
+    if (pc > 0 && isNum(ws[pc - 1])) fraction = Number(ws[pc - 1]) / 100;
+    if (fraction !== undefined && !(fraction > 0 && fraction <= 1)) return null;
+    return fraction !== undefined && fraction < 1 ? { kind: 'hl_close', coin: a, fraction } : { kind: 'hl_close', coin: a };
   }
   // HYPE between HyperEVM and Hyperliquid (HyperCore).
   if (has(/ (move|transfer|send|shift|bridge) /) && has(/ (hype|hyp) /) && has(/ (hyperevm|evm|hyperliquid|core|hypercore) /)) {
@@ -160,11 +188,23 @@ export function parse(text) {
     return amount ? { kind: 'aave_withdraw', amount } : null;
   }
   const buy = has(/ (buy|long|go long) /), sell = has(/ (sell|short|go short) /);
+  const L = takeLeverage(ws);
+  const lev = L.leverage !== undefined ? { leverage: L.leverage } : {};
   if (buy !== sell) {
-    const { amount, asset: a } = amountAndAsset(ws);
-    if (!amount || (a && a === 'USDC')) return null;
-    return { kind: 'hl_order', side: buy ? 'buy' : 'sell', size: amount, coin: a ?? 'ETH' };
+    const { amount, asset: a } = amountAndAsset(L.ws);
+    if (!amount) return null;
+    const side = buy ? 'buy' : 'sell';
+    if (a === 'USDC') {
+      // A size in dollars ("buy $50 of eth"): the coin is named elsewhere.
+      const coin = L.ws.map(asset).find((x) => x && x !== 'USDC');
+      return coin ? { kind: 'hl_order', side, usd: amount, coin, ...lev } : null;
+    }
+    return { kind: 'hl_order', side, size: amount, coin: a ?? 'ETH', ...lev };
   }
+  if (L.leverage !== undefined && has(/ (set|change|use|make|switch) /)) {
+    return { kind: 'hl_leverage', coin: L.ws.map(asset).find((x) => x && x !== 'USDC') ?? 'ETH', leverage: L.leverage };
+  }
+  if (has(/ (history|recent|activity|last trades|past trades) /)) return { kind: 'history' };
   if (has(/ (status|positions?|portfolio|how am i doing|summary|balance|balances) /)) return { kind: 'status' };
   return null;
 }
@@ -172,8 +212,9 @@ export function parse(text) {
 /** The intent in a few words, for the confirm screen (glasses fit about 30 characters a line). */
 export function describe(i) {
   switch (i.kind) {
-    case 'hl_order': return `${i.side === 'buy' ? 'Buy' : 'Sell'} ${i.size} ${i.coin} perp`;
-    case 'hl_close': return `Close ${i.coin} position`;
+    case 'hl_order': return `${i.side === 'buy' ? 'Buy' : 'Sell'} ${i.usd ? `$${i.usd} of ${i.coin}` : `${i.size} ${i.coin}`} perp${i.leverage ? ` at ${i.leverage}x` : ''}`;
+    case 'hl_close': return i.fraction ? `Close ${Math.round(i.fraction * 100)}% of ${i.coin} position` : `Close ${i.coin} position`;
+    case 'hl_leverage': return `Set ${i.coin} leverage to ${i.leverage}x`;
     case 'aave_supply': return `Supply ${i.amount} USDC to Aave`;
     case 'aave_withdraw': return i.amount === 'all' ? 'Withdraw all USDC from Aave' : `Withdraw ${i.amount} USDC from Aave`;
     case 'swap': return `Swap ${i.amount} ${i.from} to ${i.to}`;
