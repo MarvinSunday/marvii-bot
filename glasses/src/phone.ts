@@ -16,10 +16,12 @@ export const phone = {
         </section>
         <p id="code" class="note" hidden></p>
         <form id="say"><input id="text" placeholder='Type a command, e.g. "buy 0.01 eth"' autocomplete="off"><button>Send</button></form>
+        <p class="note"><button id="help" type="button" class="link">What can I say?</button></p>
         <p class="note mute">Hold the touchpad (or the R1 ring) to speak. Actions stay within the limits you approved with your passkey on near.marvii.xyz.</p>
         <p class="note mute small">Server: ${api.replace(/[<>&"]/g, '')}</p>
       </main>`;
-    el = Object.fromEntries(['g-title', 'g-body', 'g-hint', 'code', 'say', 'text'].map((id) => [id, document.getElementById(id)!]));
+    el = Object.fromEntries(['g-title', 'g-body', 'g-hint', 'code', 'say', 'text', 'help'].map((id) => [id, document.getElementById(id)!]));
+    el.help.addEventListener('click', () => void command('help'));
     el.say.addEventListener('submit', (e) => {
       e.preventDefault();
       const input = el.text as HTMLInputElement;

@@ -28,6 +28,8 @@ Hold the touchpad or the R1 ring and speak, send a Telegram voice note, or type:
 |---|---|
 | `buy 0.01 eth` · `short 0.02 btc` | Hyperliquid testnet perp, a marketable limit order at most 1% from the mid price |
 | `close eth` | closes the open position (reduce-only) |
+| `move 0.5 hype to hyperliquid` · `move 0.5 hype to hyperevm` | the same, for HYPE between HyperEVM and Hyperliquid (same address on both). USDC between them isn't supported yet. |
+| `move 40 usdc to perps` · `move 20 usdc to spot` | opens the Hyperliquid card in your Marvii wallet for a passkey tap. Money sent to you on Hyperliquid lands in spot; the glance shows both balances. |
 | `supply 50 usdc` · `withdraw 20 usdc` · `withdraw all` | Aave V3 on Base Sepolia |
 | `swap 10 usdc to eth` · `swap 0.001 eth for usdc` | Uniswap V3 on Base Sepolia. Bought ETH arrives as WETH and is unwrapped to ETH. |
 | `bet 10 on yes` · `bet 25 on no for nvidia` | Polymarket paper bet on a market you follow, at the live price |

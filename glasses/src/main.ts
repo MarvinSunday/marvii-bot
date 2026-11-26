@@ -83,7 +83,7 @@ function view(): View {
     const mark = !a.done ? (a.waiting ? '[phone] ' : '... ') : a.ok ? '[ok] ' : '[x] ';
     return { kind: 'text', title, body: mark + a.text, hint: a.waiting ? 'Approve with your passkey on your phone' : a.done ? 'Details in Telegram' : '' };
   }
-  return { kind: 'list', name: 'home', title, items: state.lines.length ? state.lines : ['No positions yet'], hint: 'Hold to speak  -  tap to refresh' };
+  return { kind: 'list', name: 'home', title, items: state.lines.length ? state.lines : ['No positions yet'], hint: 'Hold to speak  -  say "help" for commands' };
 }
 
 const show = () => render(view()).catch((e) => console.warn('render', e));
@@ -101,7 +101,9 @@ async function poll() {
 function handle(r: Reply) {
   if (r.kind === 'prompt') flash = null;
   else if (r.kind === 'status') flash = { text: '', lines: r.lines?.length ? r.lines : ['Nothing yet'], until: Date.now() + 8000 };
-  else if (r.kind === 'unknown') flash = { text: r.reason ? r.reason : r.heard ? `Heard "${r.heard}". Try "buy 0.01 eth", "bet 10 on yes" or "status".` : (r.text ?? 'Try again'), until: Date.now() + 6000 };
+  else if (r.kind === 'handoff') flash = { text: `[phone] ${r.reason ?? r.text}`, until: Date.now() + 10_000 };
+  else if (r.kind === 'help') flash = { text: '', lines: r.lines ?? [], until: Date.now() + 25_000 };
+  else if (r.kind === 'unknown') flash = { text: r.reason ? r.reason : r.heard ? `Heard "${r.heard}". Say "help" for the list.` : (r.text ?? 'Try again'), until: Date.now() + 6000 };
   return poll();
 }
 

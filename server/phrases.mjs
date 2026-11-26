@@ -1,0 +1,58 @@
+// Everything a user can say or type, in one place: Telegram's /help and the
+// glasses' "help" screen read from here, so the two never drift apart.
+
+/** For Telegram: every phrase, grouped by venue, with the commands. */
+export const TELEGRAM_HELP = [
+  'Type it, send a voice note, or hold the touchpad on your glasses and say it. Then tap Confirm.',
+  '',
+  '📈 Hyperliquid perps (testnet), ETH or BTC, up to 3x',
+  '• buy 0.01 eth  ·  long 0.01 btc',
+  '• sell 0.02 eth  ·  short 0.01 btc',
+  '• close eth  ·  close btc',
+  '• move 40 usdc to perps  ·  move 20 usdc to spot  (opens your wallet for a passkey tap)',
+  '  Money sent to you on Hyperliquid lands in spot: move it to perps to trade.',
+  '• move 0.5 hype to hyperliquid  ·  move 0.5 hype to hyperevm  (same address on both; passkey tap)',
+  '',
+  '🏦 Aave (Base Sepolia), USDC',
+  '• supply 50 usdc  ·  deposit 50',
+  '• withdraw 20 usdc  ·  withdraw all',
+  '',
+  '🔄 Uniswap (Base Sepolia), USDC ↔ ETH',
+  '• swap 10 usdc to eth',
+  '• swap 0.001 eth for usdc',
+  '',
+  '🎲 Polymarket paper bets, on a market you /watch',
+  '• bet 10 on yes  ·  bet 10 on no',
+  '• bet 10 on yes for march  (a word from the question, when you follow several)',
+  '• cash out  ·  cash out march',
+  '',
+  '👀 Anytime',
+  '• status  (your positions now)',
+  '• yes  ·  cancel  (answer the open prompt)',
+  '• help  (this list)',
+  '',
+  'Numbers can be spoken ("zero point zero one", "fifty dollars"). Bought ETH lands as ETH, not WETH.',
+  '',
+  'Commands',
+  '/status: your positions now',
+  '/watch <polymarket link>: follow a market (event links work too)',
+  '/watch: what you follow  ·  /unwatch <slug>: stop',
+  '/pair <code>: connect your G2 glasses',
+  '/link: open the wallet link again  ·  /unlink: forget your wallet here',
+].join('\n');
+
+/** For the glasses: short lines (they fit about 40 characters), shown as a list. */
+export const GLASSES_HELP = [
+  'Perps: buy 0.01 eth / short 0.01 btc',
+  'close eth',
+  'move 40 usdc to perps / to spot',
+  'move 0.5 hype to hyperevm / hyperliquid',
+  'Aave: supply 50 usdc',
+  'withdraw 20 usdc / withdraw all',
+  'Swap: swap 10 usdc to eth',
+  'swap 0.001 eth for usdc',
+  'Polymarket: bet 10 on yes',
+  'bet 10 on no for march / cash out',
+  'status / yes / cancel',
+  'Tap: confirm  Double-tap: cancel',
+];

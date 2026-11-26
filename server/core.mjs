@@ -5,7 +5,15 @@ import { snapshot, glance } from './feeds.mjs';
 import { run, promptId } from './marvii.mjs';
 import { allLinked, update, user } from './store.mjs';
 import { resolve, runPaper, positions } from './paper.mjs';
+import { GLASSES_HELP } from './phrases.mjs';
 import { config } from './config.mjs';
+
+/** The wallet page's Hyperliquid card, opened on a spot <-> perps move for the owner to approve. */
+const moveUrl = (i, s) => {
+  const amount = i.amount === 'all' ? (i.toPerp ? s?.hl?.spotUsdc : s?.hl?.withdrawable) : Number(i.amount);
+  const a = amount > 0 ? `&amount=${String(Math.floor(amount * 100) / 100)}` : '';
+  return `${config.marvii.page}/#/chain-998?hl=${i.toPerp ? 'perps' : 'spot'}${a}`;
+};
 
 /** Things outside core that want to know (the Telegram bot). */
 export const hooks = { notify: async (_u, _msg) => {} };
@@ -43,7 +51,8 @@ export const promptText = (id) => prompts.get(id)?.text;
  */
 export async function ask(u, phrase) {
   const i = parse(phrase);
-  if (!i) return { kind: 'unknown', text: `Didn't catch that: "${phrase}". Try "buy 0.01 eth" or "status".` };
+  if (!i) return { kind: 'unknown', text: `Didn't catch that: "${phrase}". Say "help" for everything you can say.` };
+  if (i.kind === 'help') return { kind: 'help', lines: GLASSES_HELP };
   if (i.kind === 'status') return { kind: 'status', lines: await lines(u, { fresh: true }) };
   if (i.kind === 'yes' || i.kind === 'no') {
     const id = openPrompt(u);
@@ -52,6 +61,21 @@ export async function ask(u, phrase) {
     return { kind: i.kind === 'yes' ? 'confirmed' : 'cancelled', id };
   }
   if (!u.wallet) return { kind: 'unknown', text: 'Link your Marvii wallet first: /start in Telegram.' };
+  if (i.kind === 'hype_move') {
+    // Also the owner's own action, with the passkey, on the wallet page.
+    const url = `${config.marvii.page}/#/chain-998?hl=${i.toCore ? 'hype-core' : 'hype-evm'}&amount=${i.amount}`;
+    const text = `${describe(i)}: approve it with your passkey on your phone.`;
+    hooks.notify(u, { text: `🔐 ${text}`, url, button: 'Open in Marvii wallet' });
+    return { kind: 'handoff', text, url, reason: 'Approve on your phone: the link is in Telegram' };
+  }
+  if (i.kind === 'hl_transfer') {
+    // Moving between spot and perps is the owner's own action: the bot's grant
+    // can't sign it. Hand over a link that opens it, ready for the passkey.
+    const url = moveUrl(i, snaps.get(u.id));
+    const text = `${describe(i)}: approve it with your passkey on your phone.`;
+    hooks.notify(u, { text: `🔐 ${text}`, url, button: 'Open in Marvii wallet' });
+    return { kind: 'handoff', text, url, reason: 'Approve on your phone: the link is in Telegram' };
+  }
   let intent = i;
   if (i.kind.startsWith('pm_')) {
     const r = await resolve(u, i);
@@ -121,6 +145,15 @@ async function poll() {
   for (const u of allLinked()) {
     try {
       const s = await refresh(u);
+      // USDC that arrived in Hyperliquid spot isn't usable as margin until moved.
+      const spot = s.hl?.spotUsdc;
+      if (spot !== undefined) {
+        if (u.lastSpot !== undefined && spot - u.lastSpot >= 0.5) {
+          const got = Math.floor((spot - u.lastSpot) * 100) / 100;
+          hooks.notify(u, { text: `📥 ${got} USDC arrived in your Hyperliquid spot balance. To trade perps with it, say "move ${Math.floor(spot)} usdc to perps".` });
+        }
+        if (spot !== u.lastSpot) update(u.id, { lastSpot: spot });
+      }
       const seen = u.seen ?? {};
       const fired = alertsFor(u, s);
       const keys = new Set(fired.map((f) => f.key.split(':').slice(0, 2).join(':')));

@@ -9,19 +9,9 @@ import { linkFor } from './marvii.mjs';
 import { polymarket, polymarketEvent, polymarketSlug } from './feeds.mjs';
 import { transcribe } from './stt.mjs';
 import { linkedHooks } from './http.mjs';
+import { TELEGRAM_HELP } from './phrases.mjs';
 
-const HELP = [
-  'Say or type what you want, then tap Confirm:',
-  '• buy 0.01 eth · short 0.02 eth · close eth  (Hyperliquid testnet)',
-  '• supply 50 usdc · withdraw 20 usdc  (Aave, Base Sepolia)',
-  '• swap 10 usdc to eth  (Uniswap, Base Sepolia)',
-  '• bet 10 on yes · cash out  (Polymarket, paper bets on a market you /watch)',
-  '• status',
-  '',
-  '/watch <polymarket link>: follow a market\'s odds',
-  '/pair <code>: connect your G2 glasses',
-  '/unlink: forget your wallet here',
-].join('\n');
+const HELP = TELEGRAM_HELP;
 
 const keyboard = (links = []) => {
   const k = new InlineKeyboard();
@@ -144,6 +134,10 @@ export function startBot() {
     const r = await ask(u, text);
     if (r.kind === 'prompt') {
       await ctx.reply(r.detail ? `${r.text}\n${r.detail}` : r.text, { reply_markup: new InlineKeyboard().text('Confirm', `y:${r.id}`).text('Cancel', `n:${r.id}`) });
+    } else if (r.kind === 'handoff') {
+      // The link arrives through hooks.notify, with its button.
+    } else if (r.kind === 'help') {
+      await ctx.reply(HELP);
     } else if (r.kind === 'status') {
       await ctx.reply(r.lines.length ? r.lines.join('\n') : 'Nothing to show yet.');
     } else if (r.kind === 'cancelled') {
@@ -155,7 +149,7 @@ export function startBot() {
 
   bot.on('message:text', (ctx) => handlePhrase(ctx, ctx.message.text));
   bot.on('message:voice', async (ctx) => {
-    if (ctx.message.voice.duration > 15) return ctx.reply('Keep it under 15 seconds, like "buy 0.01 eth".');
+    if (ctx.message.voice.duration > 15) return ctx.reply('Keep it under 15 seconds, like "buy 0.01 eth". Send /help for everything you can say.');
     const file = await ctx.getFile();
     const ogg = Buffer.from(await (await fetch(`https://api.telegram.org/file/bot${config.telegramToken}/${file.file_path}`)).arrayBuffer());
     const heard = await transcribe(await oggToPcm(ogg));

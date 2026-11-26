@@ -5,9 +5,12 @@
 //   close eth
 //   supply 50 usdc · deposit 50 · withdraw 20 usdc · withdraw all
 //   swap 10 usdc to eth · swap 0.001 eth for usdc
+//   move 40 usdc to perps · move 20 to spot   (Hyperliquid, needs the owner's passkey)
+//   move 0.5 hype to hyperliquid · move 0.5 hype to hyperevm   (same)
 //   bet 10 on yes · bet 10 dollars on no for nvidia · cash out   (Polymarket, paper)
 //   status · positions
 //   yes · confirm · no · cancel
+//   help · what can i say
 
 const ONES = { zero: 0, oh: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19 };
 const TENS = { twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90 };
@@ -17,6 +20,7 @@ const ASSETS = [
   [/^(eth|ether|ethereum|weth|e t h)$/, 'ETH'],
   [/^(btc|bitcoin|b t c)$/, 'BTC'],
   [/^(sol|solana)$/, 'SOL'],
+  [/^(hype|hyp|hype token)$/, 'HYPE'],
   [/^(usdc|usd c|u s d c|dollars?|usd|bucks)$/, 'USDC'],
 ];
 
@@ -28,6 +32,8 @@ export function normalize(text) {
     .replace(/\$\s*([\d.]+)/g, '$1 usdc')
     .replace(/u\.?s\.?d\.?c\.?/g, 'usdc')
     .replace(/e\.?t\.?h\.?(?![a-z])/g, 'eth')
+    .replace(/\bhyper[\s-]*e\.?\s*v\.?\s*m\b/g, 'hyperevm')
+    .replace(/\bhyper[\s-]+liquid\b/g, 'hyperliquid')
     .replace(/[^a-z0-9.\s]/g, ' ')
     .replace(/\.(?!\d)/g, ' ')
     .replace(/\s+/g, ' ')
@@ -98,6 +104,7 @@ export function parse(text) {
 
   if (has(/^ (yes|yeah|yep|confirm|confirmed|do it|go|ok|okay|approve) $/)) return { kind: 'yes' };
   if (has(/^ (no|nope|cancel|stop|never mind|nevermind|abort) $/)) return { kind: 'no' };
+  if (has(/ (help|commands|what can i (say|do)|what do i say|options|menu) /)) return { kind: 'help' };
 
   // Polymarket paper bets. Before "close" and "sell", which they also use.
   if (has(/ (cash out|cashout) /) || (has(/ (bet|bets|wager) /) && has(/ (close|exit|sell|end) /))) {
@@ -115,6 +122,26 @@ export function parse(text) {
   if (has(/ (close|exit|flatten) /)) {
     const a = ws.map(asset).find(Boolean) ?? 'ETH';
     return { kind: 'hl_close', coin: a };
+  }
+  // HYPE between HyperEVM and Hyperliquid (HyperCore).
+  if (has(/ (move|transfer|send|shift|bridge) /) && has(/ (hype|hyp) /) && has(/ (hyperevm|evm|hyperliquid|core|hypercore) /)) {
+    const t = ws.findIndex((w) => ['to', 'into', 'onto'].includes(w));
+    const dest = t >= 0 ? ' ' + ws.slice(t + 1).join(' ') + ' ' : '';
+    const toCore = / (hyperliquid|core|hypercore) /.test(dest) ? true : / (hyperevm|evm) /.test(dest) ? false : null;
+    const { amount } = amountAndAsset(ws);
+    if (toCore === null || !amount) return null;
+    return { kind: 'hype_move', amount, toCore };
+  }
+  // Hyperliquid spot <-> perps. Speech often hears "perps" as "perks".
+  const perps = / (perp|perps|perks|perpetual|perpetuals|perp account|margin) /, spot = / (spot|spot account) /;
+  if (has(/ (move|transfer|send|shift) /) && (has(perps) || has(spot))) {
+    const t = ws.findIndex((w) => ['to', 'into', 'onto'].includes(w));
+    const dest = t >= 0 ? ' ' + ws.slice(t + 1).join(' ') + ' ' : s;
+    const toPerp = perps.test(dest) ? true : spot.test(dest) ? false : has(/ from spot /);
+    if (has(/ (all|everything|max) /)) return { kind: 'hl_transfer', amount: 'all', toPerp };
+    const { amount, asset: a } = amountAndAsset(ws);
+    if (!amount || (a && a !== 'USDC')) return null;
+    return { kind: 'hl_transfer', amount, toPerp };
   }
   if (has(/ (swap|convert|exchange|trade) /) && (has(/ (to|for|into) /))) {
     const i = ws.findIndex((w) => ['to', 'for', 'into'].includes(w));
@@ -150,6 +177,8 @@ export function describe(i) {
     case 'aave_supply': return `Supply ${i.amount} USDC to Aave`;
     case 'aave_withdraw': return i.amount === 'all' ? 'Withdraw all USDC from Aave' : `Withdraw ${i.amount} USDC from Aave`;
     case 'swap': return `Swap ${i.amount} ${i.from} to ${i.to}`;
+    case 'hype_move': return `Move ${i.amount} HYPE to ${i.toCore ? 'Hyperliquid' : 'HyperEVM'}`;
+    case 'hl_transfer': return `Move ${i.amount === 'all' ? 'all' : i.amount} USDC to ${i.toPerp ? 'perps' : 'spot'}`;
     case 'pm_bet': return `Paper bet $${i.amount} on ${i.outcome.toUpperCase()}${i.pct !== undefined ? ` at ${i.pct}%` : ''}`;
     case 'pm_close': return `Cash out paper ${i.outcome ? i.outcome.toUpperCase() + ' ' : ''}bet${i.value !== undefined ? `, $${i.value.toFixed(2)}` : ''}`;
     default: return i.kind;

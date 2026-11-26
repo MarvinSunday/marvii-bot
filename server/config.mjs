@@ -35,6 +35,7 @@ export const config = {
   evmRpc: env('BASE_SEPOLIA_RPC', 'https://sepolia.base.org'),
   hyperliquid: env('HL_API', 'https://api.hyperliquid-testnet.xyz'),
   polymarket: env('POLYMARKET_API', 'https://gamma-api.polymarket.com'),
+  hyperEvmRpc: env('HYPEREVM_RPC', 'https://rpc.hyperliquid-testnet.xyz/evm'),
 
   /** How often to refresh positions and check alerts. */
   pollMs: Number(env('POLL_MS', 20_000)),

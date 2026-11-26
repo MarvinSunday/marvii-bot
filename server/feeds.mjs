@@ -46,8 +46,14 @@ export const hlMids = () => hlInfo({ type: 'allMids' });
 
 /** Open perps positions and account value for an address. */
 export async function hlState(address) {
-  const s = await hlInfo({ type: 'clearinghouseState', user: address });
-  const mids = await hlMids();
+  const [s, spot, mids] = await Promise.all([
+    hlInfo({ type: 'clearinghouseState', user: address }),
+    hlInfo({ type: 'spotClearinghouseState', user: address }),
+    hlMids(),
+  ]);
+  // Transfers from other Hyperliquid users land in spot, not perps.
+  const u = spot.balances?.find((b) => b.coin === 'USDC');
+  const h = spot.balances?.find((b) => b.coin === 'HYPE');
   const positions = s.assetPositions.map(({ position: p }) => {
     const size = Number(p.szi), mark = Number(mids[p.coin] ?? p.entryPx), liq = p.liquidationPx ? Number(p.liquidationPx) : null;
     return {
@@ -57,7 +63,7 @@ export async function hlState(address) {
       leverage: p.leverage?.value,
     };
   });
-  return { accountValue: Number(s.marginSummary.accountValue), withdrawable: Number(s.withdrawable), positions };
+  return { accountValue: Number(s.marginSummary.accountValue), withdrawable: Number(s.withdrawable), spotUsdc: u ? Number(u.total) - Number(u.hold) : 0, spotHype: h ? Number(h.total) - Number(h.hold) : 0, positions };
 }
 
 // ---- Aave (Base Sepolia)
@@ -79,6 +85,14 @@ export async function aaveState(address) {
     usdc: Number(formatUnits(cash, 6)),
     suppliedUsdc: Number(formatUnits(supplied, 6)),
   };
+}
+
+/** Native HYPE on HyperEVM testnet (the same address as on Hyperliquid). */
+export async function hyperEvmHype(address) {
+  const r = await fetch(config.hyperEvmRpc, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_getBalance', params: [address, 'latest'] }) });
+  const j = await r.json();
+  if (typeof j.result !== 'string') throw new Error('HyperEVM RPC');
+  return Number(formatUnits(BigInt(j.result), 18));
 }
 
 export async function ethBalance(address) {
@@ -118,12 +132,13 @@ export const polymarketSlug = (s) => String(s).trim().replace(/^https?:\/\/(www\
 // ---- Everything for one user
 
 export async function snapshot(u) {
-  const out = { at: Date.now(), hl: null, aave: null, eth: null, markets: [], errors: [] };
+  const out = { at: Date.now(), hl: null, aave: null, eth: null, evmHype: null, markets: [], errors: [] };
   const jobs = [];
   if (u.evm) {
     jobs.push(hlState(u.evm).then((x) => (out.hl = x), (e) => out.errors.push(`Hyperliquid: ${e.message}`)));
     jobs.push(aaveState(u.evm).then((x) => (out.aave = x), (e) => out.errors.push(`Aave: ${e.message}`)));
     jobs.push(ethBalance(u.evm).then((x) => (out.eth = x), (e) => out.errors.push(`Base: ${e.message}`)));
+    jobs.push(hyperEvmHype(u.evm).then((x) => (out.evmHype = x), (e) => out.errors.push(`HyperEVM: ${e.message}`)));
   }
   // Followed markets, and any market holding a paper bet.
   for (const slug of new Set([...(u.watch ?? []), ...(u.bets ?? []).map((b) => b.slug)])) jobs.push(polymarket(slug).then((x) => x && out.markets.push(x), () => {}));
@@ -143,7 +158,9 @@ export function glance(s) {
   for (const p of s.hl?.positions ?? []) {
     lines.push({ urgent: p.liqDistancePct !== null && p.liqDistancePct < 10, text: `${p.coin} ${p.side} ${signed(p.pnl, usd)} ${signed(p.roe, (x) => x.toFixed(1))}%` });
   }
-  if (s.hl && !s.hl.positions.length) lines.push({ text: `Hyperliquid ${usd(s.hl.accountValue)}, no position` });
+  if (s.hl && !s.hl.positions.length) lines.push({ text: `Hyperliquid perps ${usd(s.hl.accountValue)}, no position` });
+  if (s.hl?.spotUsdc >= 0.01) lines.push({ text: `Hyperliquid spot ${usd(s.hl.spotUsdc)} USDC` });
+  if (s.hl?.spotHype > 0 || s.evmHype > 0) lines.push({ text: `HYPE ${(s.hl?.spotHype ?? 0).toFixed(2)} HL, ${(s.evmHype ?? 0).toFixed(2)} HyperEVM` });
   if (s.aave) {
     const a = s.aave;
     if (a.health !== null) lines.push({ urgent: a.health < 1.3, text: `Aave health ${a.health.toFixed(2)}` });
