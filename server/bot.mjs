@@ -6,7 +6,7 @@ import { config } from './config.mjs';
 import { user, update, pair, unpairAll } from './store.mjs';
 import { ask, confirm, lines, hooks, openPrompt } from './core.mjs';
 import { linkFor } from './marvii.mjs';
-import { polymarket, polymarketSlug } from './feeds.mjs';
+import { polymarket, polymarketEvent, polymarketSlug } from './feeds.mjs';
 import { transcribe } from './stt.mjs';
 import { linkedHooks } from './http.mjs';
 
@@ -15,6 +15,7 @@ const HELP = [
   '• buy 0.01 eth · short 0.02 eth · close eth  (Hyperliquid testnet)',
   '• supply 50 usdc · withdraw 20 usdc  (Aave, Base Sepolia)',
   '• swap 10 usdc to eth  (Uniswap, Base Sepolia)',
+  '• bet 10 on yes · cash out  (Polymarket, paper bets on a market you /watch)',
   '• status',
   '',
   '/watch <polymarket link>: follow a market\'s odds',
@@ -101,10 +102,35 @@ export function startBot() {
     const u = user(ctx.from.id);
     const slug = polymarketSlug(ctx.match ?? '');
     if (!slug) return ctx.reply(u.watch.length ? `Watching:\n${u.watch.join('\n')}\n\n/unwatch <slug> to stop.` : 'Send /watch with a Polymarket market link.');
+    if (await polymarket(slug).catch(() => null)) return watch(ctx, u, slug);
+    // An event link: follow its market, or let the owner pick one.
+    const e = await polymarketEvent(slug).catch(() => null);
+    if (!e || !e.markets.length) return ctx.reply(e ? 'That event has no open markets.' : 'No Polymarket market or event with that link.');
+    if (e.markets.length === 1) return watch(ctx, u, e.markets[0].slug);
+    const options = e.markets.slice(0, 8);
+    // Button data is limited to 64 bytes, too short for slugs: keep the choices here.
+    update(u.id, { picking: options.map((m) => m.slug) });
+    const k = new InlineKeyboard();
+    options.forEach((m, i) => k.text(m.question.slice(0, 60), `w:${i}`).row());
+    await ctx.reply(`${e.title} has ${e.markets.length} markets. Which one?`, { reply_markup: k });
+  });
+
+  async function watch(ctx, u, slug) {
     const m = await polymarket(slug).catch(() => null);
-    if (!m) return ctx.reply('No Polymarket market with that link. Use a market page (polymarket.com/event/…).');
+    if (!m) return ctx.reply("Couldn't read that market. Try again in a moment.");
     update(u.id, { watch: [...new Set([...u.watch, slug])].slice(-5) });
-    await ctx.reply(`👀 ${m.question}\n${m.outcomes.map((o) => `${o.name} ${o.pct}%`).join(' · ')}\n\nYou'll hear when the odds move. (Read only: Polymarket runs on mainnet, and this demo stays on testnets.)`);
+    await ctx.reply(`👀 ${m.question}\n${m.outcomes.map((o) => `${o.name} ${o.pct}%`).join(' · ')}\n\nYou'll hear when the odds move. Say "bet 10 on yes" for a paper bet (Polymarket runs on mainnet only, so bets here are on paper).`);
+  }
+
+  bot.callbackQuery(/^w:(\d+)$/, async (ctx) => {
+    const u = user(ctx.from.id);
+    const slug = u.picking?.[Number(ctx.match[1])];
+    await ctx.answerCallbackQuery(slug ? 'Following' : 'This choice expired');
+    await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => {});
+    if (slug) {
+      update(u.id, { picking: null });
+      await watch(ctx, u, slug);
+    }
   });
   bot.command('unwatch', async (ctx) => {
     const u = user(ctx.from.id);
@@ -117,7 +143,7 @@ export function startBot() {
     const u = user(ctx.from.id);
     const r = await ask(u, text);
     if (r.kind === 'prompt') {
-      await ctx.reply(r.text, { reply_markup: new InlineKeyboard().text('Confirm', `y:${r.id}`).text('Cancel', `n:${r.id}`) });
+      await ctx.reply(r.detail ? `${r.text}\n${r.detail}` : r.text, { reply_markup: new InlineKeyboard().text('Confirm', `y:${r.id}`).text('Cancel', `n:${r.id}`) });
     } else if (r.kind === 'status') {
       await ctx.reply(r.lines.length ? r.lines.join('\n') : 'Nothing to show yet.');
     } else if (r.kind === 'cancelled') {

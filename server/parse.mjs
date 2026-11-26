@@ -5,6 +5,7 @@
 //   close eth
 //   supply 50 usdc · deposit 50 · withdraw 20 usdc · withdraw all
 //   swap 10 usdc to eth · swap 0.001 eth for usdc
+//   bet 10 on yes · bet 10 dollars on no for nvidia · cash out   (Polymarket, paper)
 //   status · positions
 //   yes · confirm · no · cancel
 
@@ -83,6 +84,10 @@ function amountAndAsset(ws) {
   return { amount: num(ws[i]), asset: a };
 }
 
+const FILLER = new Set(['bet', 'bets', 'my', 'the', 'a', 'on', 'in', 'for', 'about', 'market', 'cash', 'out', 'cashout', 'close', 'exit', 'sell', 'end', 'paper', 'please', 'usdc', 'and', 'of', 'that', 'this', 'it', 'will', 'to']);
+/** Words that may name the market ("for nvidia"), filler dropped. */
+const about = (ws) => ws.filter((w) => !FILLER.has(w) && !isNum(w) && w.length > 2);
+
 /**
  * @returns {{ kind: string, [k: string]: any } | null} null when nothing matched
  */
@@ -94,6 +99,19 @@ export function parse(text) {
   if (has(/^ (yes|yeah|yep|confirm|confirmed|do it|go|ok|okay|approve) $/)) return { kind: 'yes' };
   if (has(/^ (no|nope|cancel|stop|never mind|nevermind|abort) $/)) return { kind: 'no' };
 
+  // Polymarket paper bets. Before "close" and "sell", which they also use.
+  if (has(/ (cash out|cashout) /) || (has(/ (bet|bets|wager) /) && has(/ (close|exit|sell|end) /))) {
+    return { kind: 'pm_close', about: about(ws) };
+  }
+  if (has(/ (bet|wager) /)) {
+    const { amount, asset: a } = amountAndAsset(ws);
+    const on = ws.indexOf('on', ws.findIndex(isNum));
+    let j = on + 1;
+    while (['the', 'a'].includes(ws[j])) j++;
+    const outcome = on > 0 ? ws[j] : undefined;
+    if (!amount || (a && a !== 'USDC') || !outcome) return null;
+    return { kind: 'pm_bet', amount, outcome, about: about(ws.slice(j + 1)) };
+  }
   if (has(/ (close|exit|flatten) /)) {
     const a = ws.map(asset).find(Boolean) ?? 'ETH';
     return { kind: 'hl_close', coin: a };
@@ -132,6 +150,8 @@ export function describe(i) {
     case 'aave_supply': return `Supply ${i.amount} USDC to Aave`;
     case 'aave_withdraw': return i.amount === 'all' ? 'Withdraw all USDC from Aave' : `Withdraw ${i.amount} USDC from Aave`;
     case 'swap': return `Swap ${i.amount} ${i.from} to ${i.to}`;
+    case 'pm_bet': return `Paper bet $${i.amount} on ${i.outcome.toUpperCase()}${i.pct !== undefined ? ` at ${i.pct}%` : ''}`;
+    case 'pm_close': return `Cash out paper ${i.outcome ? i.outcome.toUpperCase() + ' ' : ''}bet${i.value !== undefined ? `, $${i.value.toFixed(2)}` : ''}`;
     default: return i.kind;
   }
 }

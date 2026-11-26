@@ -17,8 +17,8 @@ Bots that do it for you need your keys, and a bot holding your keys can do anyth
 **Read: one glance**
 - Hyperliquid testnet positions: side, PnL and return, most urgent first.
 - Aave on Base Sepolia: what you supplied, cash, and the health factor when you borrow.
-- Polymarket odds on markets you follow (read only, see Limits).
-- Alerts in Telegram, sent once per crossing: near liquidation, PnL moving in 5% steps, Aave health under 1.3, odds moving.
+- Polymarket odds on markets you follow, and your paper bets on them (see Limits).
+- Alerts in Telegram, sent once per crossing: near liquidation, PnL moving in 5% steps, Aave health under 1.3, odds moving, a paper bet moving 20% or its market settling.
 
 **Write: a short phrase, then one tap**
 
@@ -29,7 +29,9 @@ Hold the touchpad or the R1 ring and speak, send a Telegram voice note, or type:
 | `buy 0.01 eth` · `short 0.02 btc` | Hyperliquid testnet perp, a marketable limit order at most 1% from the mid price |
 | `close eth` | closes the open position (reduce-only) |
 | `supply 50 usdc` · `withdraw 20 usdc` · `withdraw all` | Aave V3 on Base Sepolia |
-| `swap 10 usdc to eth` · `swap 0.001 eth for usdc` | Uniswap V3 on Base Sepolia |
+| `swap 10 usdc to eth` · `swap 0.001 eth for usdc` | Uniswap V3 on Base Sepolia. Bought ETH arrives as WETH and is unwrapped to ETH. |
+| `bet 10 on yes` · `bet 25 on no for nvidia` | Polymarket paper bet on a market you follow, at the live price |
+| `cash out` · `cash out nvidia` | closes a paper bet at the live price |
 | `status` | the glance, now |
 
 - **The glasses** show `Buy 0.01 ETH perp?` with Confirm and Cancel. Tap to confirm; double-tap cancels.
@@ -52,7 +54,7 @@ NEAR Chain Signatures sign for the wallet's address ──▶ Hyperliquid / Base
 - **The bot holds no wallet keys.** Its session key is made and kept inside Marvii's module on OutLayer (Intel TDX). The bot asks the enclave to sign, and never sees the key.
 - **The owner sets the limits once,** with a passkey (Face ID or fingerprint) on near.marvii.xyz. The link from `/start` shows exactly what the bot asks for:
   - Hyperliquid ETH and BTC perps up to 3x and $2,000 of orders a day
-  - Aave supply and withdraw, Uniswap USDC↔ETH, wrapping ETH
+  - Aave supply and withdraw, Uniswap USDC↔ETH, wrapping and unwrapping ETH
   - up to 500 USDC and 0.2 ETH a day
   - 30 days, or 14 days unused
 - **Every request is checked on-chain** by Marvii's extension contract before anything is signed:
@@ -99,7 +101,7 @@ Hold or long-press to speak. The page also has a box to type a command, handy wi
 
 1. In Telegram, send `/start` to the bot and tap **Connect Marvii wallet**. The page opens in the browser, since passkeys don't work inside Telegram. Approve with your passkey, and the page returns you to the bot.
 2. Open Marvii on the glasses. It shows a 6-digit code: send `/pair 123456` to the bot.
-3. Optional: `/watch <polymarket link>` to follow a market's odds.
+3. Optional: `/watch <polymarket link>` to follow a market's odds and paper-bet on it.
 
 ## Limits and honest notes
 
@@ -107,7 +109,8 @@ Hold or long-press to speak. The page also has a box to type a command, handy wi
   - Hyperliquid testnet
   - Base Sepolia for Aave and Uniswap
   - NEAR testnet for the Marvii wallet and extension
-- **Polymarket is read only.** It runs on mainnet only. Marvii's extension can check Polymarket orders, which was tested on a mainnet fork, but this demo doesn't place them.
+- **Polymarket bets are on paper.** Polymarket runs on mainnet only, so the bot records each bet at the live price and values it at the live price, with no money and no signature. Paper bets go up to $1,000 each. Marvii's extension can already check real Polymarket orders (tested on a mainnet fork), but this demo doesn't place them.
+- **OutLayer takes 20 to 100 seconds per signature** on testnet, so a swap with approve and unwrap can take a few minutes. The glasses and Telegram show each step.
 - **Over-limit approval by passkey** works for EVM requests (Aave, Uniswap). A Hyperliquid order over its daily limit is refused.
 - **One server process** holds users in a JSON file, which is enough for the demo.
 
@@ -125,6 +128,7 @@ Built during the hackathon: everything else in this repo.
 - the phrase grammar
 - speech-to-text
 - the feeds and alerts
+- Polymarket paper bets
 - pairing
 - the confirm flow across both screens
 
@@ -133,8 +137,9 @@ Built during the hackathon: everything else in this repo.
 1. **G2 SDK:** a way to keep a small status line, or one alert, on the display while another app is open. Liquidation warnings can't wait until the user opens the app.
 2. **G2 SDK:** list updates without rebuilding the page, to change one line's text in place.
 3. **G2 SDK:** line breaks in text containers (the simulator drops `\n`).
-4. **Hyperliquid:** a testnet faucet that doesn't need a mainnet account, so new users can try trading agents.
-5. **Telegram:** passkeys (WebAuthn) inside Mini Apps, so approvals don't need to leave Telegram.
+4. **OutLayer:** faster TEE runs, or a way to keep a module warm. At 20 to 100 seconds a signature, an approve plus a swap is slow for a heads-up display.
+5. **Hyperliquid:** a testnet faucet that doesn't need a mainnet account, so new users can try trading agents.
+6. **Telegram:** passkeys (WebAuthn) inside Mini Apps, so approvals don't need to leave Telegram.
 
 ## License
 

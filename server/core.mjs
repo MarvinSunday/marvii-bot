@@ -4,6 +4,7 @@ import { parse, describe } from './parse.mjs';
 import { snapshot, glance } from './feeds.mjs';
 import { run, promptId } from './marvii.mjs';
 import { allLinked, update, user } from './store.mjs';
+import { resolve, runPaper, positions } from './paper.mjs';
 import { config } from './config.mjs';
 
 /** Things outside core that want to know (the Telegram bot). */
@@ -17,6 +18,7 @@ const PROMPT_TTL = 2 * 60_000;
 export async function refresh(u) {
   if (!u.wallet) return null;
   const s = await snapshot(u);
+  s.bets = positions(u, s.markets);
   snaps.set(u.id, s);
   return s;
 }
@@ -50,12 +52,19 @@ export async function ask(u, phrase) {
     return { kind: i.kind === 'yes' ? 'confirmed' : 'cancelled', id };
   }
   if (!u.wallet) return { kind: 'unknown', text: 'Link your Marvii wallet first: /start in Telegram.' };
+  let intent = i;
+  if (i.kind.startsWith('pm_')) {
+    const r = await resolve(u, i);
+    if (r.error) return { kind: 'unknown', text: r.error, reason: r.error };
+    intent = r.intent;
+  }
   // One open prompt per user: a new request replaces the old one.
   for (const [k, p] of prompts) if (p.user === u.id) prompts.delete(k);
   const id = promptId();
-  const text = describe(i) + '?';
-  prompts.set(id, { user: u.id, intent: i, text, at: Date.now() });
-  return { kind: 'prompt', id, text };
+  const text = describe(intent) + '?';
+  prompts.set(id, { user: u.id, intent, text, at: Date.now() });
+  // Telegram also shows which market a paper bet is on; the glasses title has room for the short text only.
+  return { kind: 'prompt', id, text, detail: intent.question };
 }
 
 /** Yes or no on a prompt. Runs the action in the background; progress and the result go to both screens. */
@@ -71,10 +80,11 @@ export function confirm(id, yes) {
   const title = p.text.replace(/\?$/, '');
   activity.set(u.id, { text: `${title}…`, at: Date.now() });
   hooks.notify(u, { text: `⏳ ${title}…` });
-  run(u, p.intent, (step) => {
+  const job = p.intent.kind.startsWith('pm_') ? runPaper(u, p.intent) : run(u, p.intent, (step) => {
     activity.set(u.id, { ...step, at: Date.now() });
     if (step.waiting) hooks.notify(u, { text: `🔐 ${step.text}`, url: step.url, button: 'Approve with passkey' });
-  }).then((r) => {
+  });
+  job.catch((e) => ({ ok: false, text: e.message })).then((r) => {
     activity.set(u.id, { text: r.text, done: true, ok: r.ok, links: r.links, at: Date.now() });
     hooks.notify(u, { text: `${r.ok ? '✅' : '⛔'} ${r.text}`, links: r.links });
     refresh(u).catch(() => {});
@@ -96,6 +106,13 @@ export function alertsFor(u, s) {
   for (const m of s.markets) {
     const top = [...m.outcomes].sort((x, y) => y.pct - x.pct)[0];
     out.push({ key: `pm:${m.slug}:${Math.round(top.pct / 5)}`, quiet: true, text: `${m.question}: ${top.name} ${top.pct}%` });
+  }
+  // Paper bets: every 20% move in value, and once when the market settles.
+  for (const b of s.bets ?? []) {
+    const k = `${b.slug}/${b.outcome}`;
+    if (b.closed) out.push({ key: `betdone:${k}:1`, text: `Settled: ${b.question}. Your paper ${b.outcome} bet is worth $${b.value.toFixed(2)} (${b.pnl >= 0 ? '+' : '-'}$${Math.abs(b.pnl).toFixed(2)}).` });
+    const bucket = Math.trunc(b.pnlPct / 20);
+    if (bucket !== 0 && !b.closed) out.push({ key: `bet:${k}:${bucket}`, text: `Paper ${b.outcome} bet ${b.pnl >= 0 ? 'up' : 'down'} ${Math.abs(b.pnlPct).toFixed(0)}% (${b.pnl >= 0 ? '+' : '-'}$${Math.abs(b.pnl).toFixed(2)}): ${b.question}` });
   }
   return out;
 }

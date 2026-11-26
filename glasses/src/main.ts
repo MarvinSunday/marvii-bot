@@ -101,7 +101,7 @@ async function poll() {
 function handle(r: Reply) {
   if (r.kind === 'prompt') flash = null;
   else if (r.kind === 'status') flash = { text: '', lines: r.lines?.length ? r.lines : ['Nothing yet'], until: Date.now() + 8000 };
-  else if (r.kind === 'unknown') flash = { text: r.heard ? `Heard "${r.heard}". Try "buy 0.01 eth" or "status".` : (r.text ?? 'Try again'), until: Date.now() + 6000 };
+  else if (r.kind === 'unknown') flash = { text: r.reason ? r.reason : r.heard ? `Heard "${r.heard}". Try "buy 0.01 eth", "bet 10 on yes" or "status".` : (r.text ?? 'Try again'), until: Date.now() + 6000 };
   return poll();
 }
 

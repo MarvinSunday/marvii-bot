@@ -6,7 +6,7 @@ export type Activity = { text: string; waiting?: boolean; url?: string; done?: b
 export type State =
   | { paired: false }
   | { paired: true; linked: boolean; lines: string[]; prompt: { id: string; text: string } | null; activity: Activity | null };
-export type Reply = { heard?: string; kind: 'prompt' | 'status' | 'confirmed' | 'cancelled' | 'unknown'; id?: string; text?: string; lines?: string[]; error?: string };
+export type Reply = { heard?: string; kind: 'prompt' | 'status' | 'confirmed' | 'cancelled' | 'unknown'; id?: string; text?: string; lines?: string[]; error?: string; reason?: string };
 
 let token = '';
 export const setToken = (t: string) => (token = t);

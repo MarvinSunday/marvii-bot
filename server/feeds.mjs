@@ -97,7 +97,19 @@ export async function polymarket(slug) {
   const [m] = await r.json();
   if (!m) return null;
   const outcomes = JSON.parse(m.outcomes), prices = JSON.parse(m.outcomePrices).map(Number);
-  return { slug, question: m.question, outcomes: outcomes.map((name, i) => ({ name, pct: Math.round(prices[i] * 1000) / 10 })), closed: m.closed };
+  return { slug, question: m.question, outcomes: outcomes.map((name, i) => ({ name, price: prices[i], pct: Math.round(prices[i] * 1000) / 10 })), closed: m.closed };
+}
+
+/**
+ * The open markets of an event, by the event's slug. An event link
+ * (polymarket.com/event/...) usually names an event, which can hold several
+ * markets (one per deadline or candidate).
+ */
+export async function polymarketEvent(slug) {
+  const r = await fetch(`${config.polymarket}/events?slug=${encodeURIComponent(slug)}`);
+  const [e] = await r.json();
+  if (!e) return null;
+  return { title: e.title, markets: (e.markets ?? []).filter((m) => !m.closed).map((m) => ({ slug: m.slug, question: m.question })) };
 }
 
 /** Accepts a slug or a polymarket.com URL. */
@@ -113,7 +125,8 @@ export async function snapshot(u) {
     jobs.push(aaveState(u.evm).then((x) => (out.aave = x), (e) => out.errors.push(`Aave: ${e.message}`)));
     jobs.push(ethBalance(u.evm).then((x) => (out.eth = x), (e) => out.errors.push(`Base: ${e.message}`)));
   }
-  for (const slug of u.watch ?? []) jobs.push(polymarket(slug).then((x) => x && out.markets.push(x), () => {}));
+  // Followed markets, and any market holding a paper bet.
+  for (const slug of new Set([...(u.watch ?? []), ...(u.bets ?? []).map((b) => b.slug)])) jobs.push(polymarket(slug).then((x) => x && out.markets.push(x), () => {}));
   await Promise.all(jobs);
   return out;
 }
@@ -143,6 +156,9 @@ export function glance(s) {
   for (const m of s.markets) {
     const top = [...m.outcomes].sort((a, b) => b.pct - a.pct)[0];
     lines.push({ text: `${m.question.slice(0, 20).trim()}… ${top.name.slice(0, 6)} ${top.pct}%` });
+  }
+  for (const b of s.bets ?? []) {
+    lines.push({ text: `Paper ${b.outcome.slice(0, 6)} ${b.question.slice(0, 12).trim()}… ${signed(b.pnl, usd)}${b.closed ? ' (settled)' : ''}` });
   }
   return lines.sort((a, b) => Number(!!b.urgent) - Number(!!a.urgent)).map((l) => (l.urgent ? '! ' : '') + l.text);
 }
