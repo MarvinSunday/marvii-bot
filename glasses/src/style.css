@@ -1,0 +1,19 @@
+:root { --bg: #0B0D12; --fg: #ECECF2; --mute: #8A8D99; --line: #25233A; --accent: #8C84F7; --g: #3BE27A; color-scheme: dark; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, -apple-system, 'Segoe UI', sans-serif; }
+main { max-width: 640px; margin: 0 auto; padding: 20px 16px 40px; display: grid; gap: 16px; }
+header { display: flex; gap: 8px; align-items: baseline; font-size: 20px; }
+.mute { color: var(--mute); }
+.small { font-size: 12px; }
+.note { margin: 0; font-size: 14px; }
+code { color: var(--accent); font-size: 15px; }
+/* A mirror of the glasses: 576 x 288, green on black. */
+.glass { aspect-ratio: 2 / 1; background: #000; border: 1px solid var(--line); border-radius: 14px; padding: 3% 3%; display: grid; grid-template-rows: auto 1fr auto; color: var(--g); font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: clamp(11px, 3vw, 16px); overflow: hidden; }
+.g-title { opacity: 0.75; }
+.g-body { white-space: pre-line; padding-top: 6px; overflow: hidden; }
+.g-item { padding: 1px 0; }
+.g-item:first-child { outline: 1px solid var(--g); outline-offset: 1px; border-radius: 3px; }
+.g-hint { opacity: 0.6; font-size: 0.85em; }
+form { display: flex; gap: 8px; }
+input { flex: 1; min-width: 0; background: #14161D; border: 1px solid #3A3D48; color: var(--fg); border-radius: 10px; padding: 10px 12px; font: inherit; }
+button { background: #5146E0; color: #fff; border: 0; border-radius: 10px; padding: 10px 16px; font: inherit; font-weight: 600; }

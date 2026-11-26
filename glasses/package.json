@@ -1,0 +1,22 @@
+{
+  "name": "marvii-bot-glasses",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Marvii bot on Even Realities G2: your positions at a glance, actions by voice and one tap",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 5174",
+    "build": "vite build",
+    "pack": "vite build && evenhub pack app.json dist -o marvii.ehpk"
+  },
+  "dependencies": {
+    "@evenrealities/even_hub_sdk": "0.0.16"
+  },
+  "devDependencies": {
+    "@evenrealities/evenhub-cli": "0.2.0",
+    "@evenrealities/evenhub-simulator": "0.9.5",
+    "typescript": "5.9.3",
+    "vite": "7.2.2"
+  },
+  "license": "MIT"
+}

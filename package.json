@@ -1,0 +1,19 @@
+{
+  "name": "marvii-bot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Marvii bot: your positions on Hyperliquid, Aave, Uniswap and Polymarket in Telegram and on Even Realities G2 glasses, acting through a Marvii wallet within the limits your passkey set",
+  "scripts": {
+    "start": "node server/index.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "engines": { "node": ">=20.17" },
+  "dependencies": {
+    "@huggingface/transformers": "4.3.2",
+    "grammy": "1.48.0",
+    "near-api-js": "5.1.1",
+    "viem": "2.57.8"
+  },
+  "license": "MIT"
+}
